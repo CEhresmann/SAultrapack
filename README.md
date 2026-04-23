@@ -1,100 +1,92 @@
-# ultrapack
+# sa-ultrapack
 
-Ultrapack or `/up:` is an opinionated Claude Code skill pack for developers: plan-driven, git-centered, minimalistic. Built around frequently clearing context and using one conversation for one feature. 
+`/up:` — плагин для Claude Code, переориентированный на системного аналитика. Цикл вместо waterfall: анализ скоупа → план покрытия → написание ФТ → проверка curl → финализация. ФТ не считается готовым, пока реальный эндпоинт не вернул реальный ответ.
 
 ## TL;DR
 
 ```
-/up:make fix the flaky login test
+/up:make P-01-01-BE баланс бонусов
 ```
 
-Will take you through the process: design → plan → execute → verify → review → update docs.
-
-Each stage populates `docs/tasks/<slug>.md`. The task file is the source of truth — any fresh agent can read it and resume from wherever the last one stopped.
-
+Запускает полный цикл: анализ скоупа → план покрытия → написание ФТ → curl-валидация → ревью. Каждый этап заполняет свою секцию в `docs/tasks/<slug>.md`. Новая сессия читает этот файл и продолжает с любого места.
 
 ```
-/up:make handsoff fix the flaky login test
+/up:make handsoff P-01-01-BE баланс бонусов
 ```
 
-Same, but ask you as few questions as possible. 
+То же самое, но с минимумом вопросов. Агент выбирает консервативные решения по умолчанию. Curl-заблокированные проверки фиксируются явно — статус BLOCKED, а не «прошло».
 
-While you are not looking, the agent will pick the safest and most conservative choices: don't delete things (copy and rename instead), work in a git branch, don't introduce silent defaults and fallbacks, fix only critical and important issues. 
+Главные идеи:
 
-Core ideas:
-- One file per task. `docs/tasks/<slug>.md` evolves through Design → Plan → Verify → Conclusion.
-- Invariants-, principles-, and assumptions-first. Discovered in design, obeyed in plan, checked at review. Short IDs (IV, PC, AS, UK, PH, RK, CK) let later sections reference them without re-quoting.
-- Per-phase subagent implementation. Each plan phase dispatched to a fresh `up:implementer`. Plan declares interfaces (`### Interfaces`) and an execution graph (`### Interface graph`); the executor topo-sorts it into waves and dispatches independent phases in parallel.
-- Mandatory manual testing. Agent must run what it built before claiming done.
-- As short as I could make it, doesn't waste tokens.
+- Один файл на задачу. `docs/tasks/<slug>.md` проходит этапы: Analyze → Plan → Verify → Conclusion.
+- Пробелы — артефакты первого класса. Неизвестное поведение = стаб с открытым вопросом `Q-NN`, а не угадка.
+- Curl обязателен. Нет реального ответа — нет «готово».
+- Каждое утверждение ФТ ссылается на источник: OpenAPI, код, схема БД, или записанный curl-ответ.
 
-## Install
+## Установка
 
-Add the repo as a marketplace and install the plugin:
+Добавить репозиторий как marketplace и установить плагин:
 
 ```
-/plugin marketplace add btseytlin/ultrapack
-/plugin install up@ultrapack
+/plugin marketplace add CEhresmann/SAultrapack
+/plugin install up@SAultrapack
 ```
 
-Then `/reload-plugins`. Verify with `/up:make` or by listing skills.
+Затем `/reload-plugins`. Проверить — `/up:make` или посмотреть список скиллов.
 
-## Design
+## Как это устроено
 
-Ultrapack is a small set of skills, commands, and agents to help Claude Code handle non-trivial work. 
+Sa-ultrapack — набор скиллов, команд и агентов для системного аналитика, который документирует функционал, описывает требования к API и сопровождает миграцию системы.
 
-Inspired by [feature-dev](https://github.com/anthropics/claude-code/tree/main/plugins/feature-dev) and [obra/superpowers](https://github.com/obra/superpowers). [feature-dev](https://github.com/anthropics/claude-code/tree/main/plugins/feature-dev) is too barebones. [obra/superpowers](https://github.com/obra/superpowers) is great, but creates huge plans with a lot of work duplication, changes too frequently and is geared to a specific type of dev work. Also it's a chore to type "superpowers" every time.
+Исходная архитектура — из ultrapack для разработчиков: один task-файл на задачу, каждый этап заполняет свою секцию, агент может войти в любом месте. Этапы переориентированы: вместо «написать код» — «написать ФТ», вместо «прогнать тесты» — «прогнать curl». Принцип называется VDD (validation-driven documentation) — сначала пишешь требование, потом проверяешь curl, потом обновляешь ФТ по факту.
 
-Ultrapack is the best of both, shortened and simplified. The whole workflow is built around updating one markdown file per task `docs/tasks/<slug>.md` with sections Design, Plan, Verify, Conclusion. It's also git centered: use worktrees by default for easier parallel work, incremental commits for easier rollback and review.
+`up:udesign` — первый этап. Читает `context.md`, `DECOMPOSITION.md`, `routes.php`, OpenAPI. Строит карту: сценарий → эндпоинты → контроллер → сервис → внешний API. Явно разделяет as-is (текущая система) и to-be (целевая система). Фиксирует инварианты (IV), допущения (AS) и пробелы (UK). Никакого ФТ на этом этапе — только task-файл.
 
-Each stage of task planning and execution is a skill. `/up:make` is a helper command that orchestrates the whole flow. 
+`up:uplan` превращает анализ в план покрытия. Какие ФТ-документы создавать, в каком порядке, какой эндпоинт каждый покрывает, какой curl-запрос подтвердит поведение. Зависимости явные: auth-документы раньше функциональных, GEN-документы раньше модульных.
 
-`up:udesign` is the first stage: discuss trade-offs with the user, discover invariants (specific things that must hold, e.g. "class Player must not access internals of class Enemy"), principles (softer guidance, like "prefer composition over inheritance"), assumptions (unverified premises the design rests on — the Conclusion reports whether each held), and unknowns (open questions to resolve during plan/execute). Prepare initial spec in the task file.
+`up:uexecute` пишет ФТ строго по формату из `WRITING_GUIDE.md`. Перед каждым документом диспатчит `up:explorer` — тот трассирует эндпоинт от маршрута до OpenAPI и возвращает карту контракта. Шаг алгоритма без источника не пишется — он становится открытым вопросом.
 
-`up:uplan` populate the task file with a specific plan. Define what files to change, what classes and methods to update or create, what interfaces they will have, what is the test strategy, break down into phases, define order of execution. No code blocks here unless they are especially tricky. 
+`up:uverify` запускает настоящий curl против настоящего эндпоинта в текущей сессии. Фиксирует статус и тело ответа. Расхождение с ФТ → ФТ обновляется сразу, delta логируется. Недоступный эндпоинт → статус BLOCKED с указанием, что нужно для разблокировки. Нет curl в этой сессии — нет «готово».
 
-`up:uexecute` create git branch and worktree, dispatch independent `up:implementer` agents per plan phase, make incremental commits, check against plan and design between phases. When the plan declares `### Interface graph`, the executor topo-sorts the graph into waves; phases in the same wave are dispatched in parallel (implementers stage changes, dispatcher commits serially in phase order). After each phase's commit: Boundary check (diff ⊆ declared `@` paths). After the final wave: Wiring check (per-IF caller/anchor match). Uses TDD for tasks where it's helpful.
+`up:ureview` диспатчит независимого `up:reviewer`. Тот читает ФТ-документ и `WRITING_GUIDE.md`, истории сессии не видит. Проверяет формат (Confluence-макросы, структура алгоритма, таблица маппинга БД), трассируемость утверждений, наличие curl-результатов в task-файле. Confidence ≥ 80, severity-tiered. После ревью — `## Conclusion` и обновление `context.md`.
 
-`up:uverify` performs manual smoke testing, defining a checklist of fast positive (what should work) and negative (what should not work) checks based on invariants. Writes summary to task file. Loops back to execute on failure. 
+## Детали
 
-`up:ureview` dispatches an independent `up:reviewer` subagent that knows the design, plan, and changes. It doesn't know the implementer's rationale. In the end it's an independent review: check that all invariants from design and plan still hold and find bugs. 
+### Скиллы
 
-Finally, the conclusion section of the task markdown file is populated. Then all documentation of the project is updated.
+Процессные скиллы (u-префикс — чтобы не конфликтовать со встроенными командами Claude Code):
 
-## Details
+- `up:udesign` — анализ скоупа: карта эндпоинтов, пробелы, инварианты, as-is / to-be граница.
+- `up:uplan` — план покрытия: ФТ-документы, порядок, curl-цели.
+- `up:uexecute` — написание ФТ по `WRITING_GUIDE.md`; диспатчит `up:explorer`; открытые вопросы вместо угадок.
+- `up:uverify` — curl-валидация: реальный запрос, реальный ответ, расхождения обновляют ФТ, заблокированные проверки фиксируются явно.
+- `up:ureview` — ревью ФТ-документа: диспатчит `up:reviewer`, заполняет Conclusion, обновляет `context.md`.
+- `up:udebug` — диагностика расхождений между curl-ответом и утверждением ФТ. Четыре фазы: воспроизвести → найти источник → гипотеза → исправить нужный артефакт.
+- `up:udocument` — обновление проектной документации, `context.md`, таблицы статусов ФТ.
 
-### Skills
+Дисциплинарные скиллы:
 
-Process skills (u-prefixed to dodge Claude Code built-ins):
-- `up:udesign` — Brainstorm requirements, populate Design + Invariants + Principles + Assumptions + Unknowns, decide whether to use TDD.
-- `up:uplan` — Plan: what files to change, what class/methods and with what interfaces, test strategy, order. Only non-trivial code blocks.
-- `up:uexecute` — Dispatch `up:implementer` per phase (parallel waves derived from `### Interface graph`), incremental commits, Boundary + plan-diff + consistency sweep per phase, Wiring check after the final wave.
-- `up:uverify` — Positive + negative + invariant checklist, manual smoke test, writes summary to task file, loops back to execute on failure.
-- `up:ureview` — Dispatch `up:reviewer` subagent: independent review, check that all invariants from design and plan still hold.
-- `up:udebug` — Four-phase root-cause investigation.
-- `up:udocument` — Guidance for updating docs, CLAUDE.md, READMEs, in-code comments.
+- `up:validation-driven-documentation` — цикл VDD: describe → validate → update → finalize. Полная аналогия TDD, но для документации.
+- `up:handsoff` — контракт режима hands-off: консервативные решения по умолчанию, decision log, BLOCKED вместо fabricated pass. Читается один раз при `Mode: hands-off` и referenced из каждого процессного скилла.
 
-Discipline skills:
-- `up:test-driven-development` — write failing test → make change → test passes.
-- `up:git-worktrees` — guidance for using git worktrees.
-- `up:handsoff` — Shared contract for hands-off mode (activated via `/up:make handsoff <description>`): safety principles, decision log, no-default rule, end-of-task summary. Referenced by `/up:make` and every process skill.
+`up:git-worktrees` — отдельный скилл для параллельной работы над несколькими ФТ; полезен когда нужно вести два сценария одновременно.
 
-### Commands
+### Команды
 
-- `/up:make [handsoff] <description>` — Orchestrate the full flow: task file → design → branch → plan → execute → verify → review → update docs.
-- `/up:try` — Design one positive and one negative test case, run both, report.
-- `/up:step-back` — Circuit breaker: stop, diagnose why approaches failed, propose new direction.
-- `/up:summary` — Produce a summary so another session can continue with zero context.
-- `/up:reflect` — Reflect on the dialogue, extract learnings into CLAUDE.md / memory / docs.
+- `/up:make [handsoff] <описание>` — полный цикл: task-файл → анализ → план → ФТ → curl → ревью → обновление docs.
+- `/up:try` — один позитивный и один негативный кейс, запустить, отчитаться.
+- `/up:step-back` — стоп, диагностика, предложить новое направление.
+- `/up:summary` — сводка состояния, чтобы другая сессия продолжила без контекста.
+- `/up:reflect` — извлечь уроки из сессии в `CLAUDE.md` / память / docs.
 
-### Agents
+### Агенты
 
-- `up:explorer` (Haiku 4.5) — Codebase tracing, file:line refs, 3–5 essential files.
-- `up:implementer` (Sonnet 4.6) — One phase: code + tests + commit + self-review. Receives `Owns` / `Implements` / `Consumes` from the plan's interface graph. `commit: self|defer` mode; defer stages only and the dispatcher commits (used in parallel waves). Fresh context per dispatch.
-- `up:reviewer` (Sonnet 4.6) — Independent review against Plan + Invariants + Assumptions. Confidence-filtered (≥80), severity-tiered.
-- `up:researcher` (Sonnet 4.6) — General-purpose investigation: decompose + systematically answer.
-- `up:summarizer` (Sonnet 4.6) — Drafts the handoff prose for `/up:summary`; gathers repo state, never writes to disk.
+- `up:explorer` (Haiku 4.5) — трассировка эндпоинта: `routes.php` → контроллер → сервис → OpenAPI. Ссылки file:line, только чтение.
+- `up:stub-writer` (Haiku 4.5) — генерирует правильно отформатированный FR-стаб с маркерами `Q-NN`, когда спека ещё не готова.
+- `up:reviewer` (Sonnet 4.6) — независимое ревью ФТ-документа: `WRITING_GUIDE.md`, трассируемость, наличие curl. Без истории сессии.
+- `up:researcher` (Sonnet 4.6) — поиск по внешним источникам: API-документация, технические спецификации.
+- `up:summarizer` (Sonnet 4.6) — черновик handoff-сводки для `/up:summary`; не пишет на диск.
 
-## License
+## Лицензия
 
-WTFPL — see [license.txt](license.txt).
+WTFPL — см. [license.txt](license.txt).
