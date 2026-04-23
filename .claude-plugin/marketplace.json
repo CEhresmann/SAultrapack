@@ -1,12 +1,12 @@
 {
-  "name": "ultrapack",
+  "name": "SysAnalysisultrapack",
   "owner": {
-    "name": "Boris Tseitlin"
+    "name": "Trubinov Timofei"
   },
   "plugins": [
     {
       "name": "up",
-      "description": "ultrapack — lean, opinionated skill pack for spec-driven, git-centered development",
+      "description": "ultrapack — lean, opinionated skill pack for spec-driven, git-centered writing functional requirements",
       "source": "./plugins/up"
     }
   ]
